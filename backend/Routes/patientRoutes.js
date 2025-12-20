@@ -9,6 +9,7 @@ router.post('/login', patientMiddleware.patientLoginLimiter, patientController.l
 
 // Protected
 router.get('/profile', patientMiddleware.authenticatePatient, patientController.getPatientProfile);
+router.post('/logout', patientMiddleware.authenticatePatient, patientController.logoutPatient);
 
 // Test
 router.get('/test', (req, res) => {

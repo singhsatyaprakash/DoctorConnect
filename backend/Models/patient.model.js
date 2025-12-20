@@ -89,6 +89,9 @@ const patientSchema = new mongoose.Schema(
     token: {
       type: String,
     },
+    lastLogin: {
+      type: Date,
+    },
   },
   { timestamps: true }
 );

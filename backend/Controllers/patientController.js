@@ -28,10 +28,16 @@ const registerPatient = async (req, res) => {
 
     const token = jwt.sign({ id: patient._id, email: patient.email, role: 'patient' }, process.env.JWT_SECRET || 'your_jwt_secret_key_here', { expiresIn: '7d' });
 
-    const publicData = patient.toObject();
-    delete publicData.password;
-    delete publicData.__v;
-    delete publicData.token;
+    // Use getPublicProfile() if available (keeps parity with doctorController), fallback to manual sanitize
+    const publicData = typeof patient.getPublicProfile === 'function'
+      ? patient.getPublicProfile()
+      : (() => {
+          const obj = patient.toObject();
+          delete obj.password;
+          delete obj.__v;
+          delete obj.token;
+          return obj;
+        })();
 
     res.status(201).json({ success: true, message: 'Patient registered', data: { patient: publicData, token, redirectTo: '/patient/dashboard' } });
   } catch (error) {
@@ -49,6 +55,7 @@ const registerPatient = async (req, res) => {
 const loginPatient = async (req, res) => {
   try {
     const { email, password } = req.body;
+    console.log(req.body);
     if (!email || !password) return res.status(400).json({ success: false, message: 'Provide email and password' });
 
     const patient = await Patient.findOne({ email: email.toLowerCase() });
@@ -64,11 +71,17 @@ const loginPatient = async (req, res) => {
     patient.token = token;
     patient.lastLogin = Date.now();
     await patient.save();
-
-    const publicData = patient.toObject();
-    delete publicData.password;
-    delete publicData.__v;
-    delete publicData.token;
+    console.log('i am here')
+    // Build public profile consistently with doctorController
+    const publicData = typeof patient.getPublicProfile === 'function'
+      ? patient.getPublicProfile()
+      : (() => {
+          const obj = patient.toObject();
+          delete obj.password;
+          delete obj.__v;
+          delete obj.token;
+          return obj;
+        })();
 
     res.status(200).json({ success: true, message: 'Login successful', data: { patient: publicData, token, redirectTo: '/patient/dashboard' } });
   } catch (error) {
@@ -89,8 +102,25 @@ const getPatientProfile = async (req, res) => {
   }
 };
 
+// Logout patient
+const logoutPatient = async (req, res) => {
+  try {
+    const patient = await Patient.findById(req.user.id);
+    if (!patient) return res.status(404).json({ success: false, message: 'Patient not found' });
+
+    patient.token = null;
+    await patient.save();
+
+    res.status(200).json({ success: true, message: 'Logged out successfully' });
+  } catch (error) {
+    console.error('Patient logout error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
+
 module.exports = {
   registerPatient,
   loginPatient,
-  getPatientProfile
+  getPatientProfile,
+  logoutPatient
 };

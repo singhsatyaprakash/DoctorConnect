@@ -14,9 +14,11 @@ const authenticateDoctor = (req, res, next) => {
   }
 
   const token = authHeader.split(' ')[1];
+  console.log(token);
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_jwt_secret_key_here');
     req.user = { id: decoded.id, email: decoded.email, role: decoded.role };
+    console.log('authectication compliatede');
     next();
   } catch (err) {
     return res.status(401).json({ success: false, message: 'Invalid token' });
