@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import PatientNavbar from '../../patientComponent/PatientNavbar';
+import PatientFooter from '../../patientComponent/PatientFooter';
 
 const samplePast = [
   { id:1, name: "Dr. Asha Rao", specialty: "Cardiologist" },
@@ -54,6 +55,7 @@ export default function PatientReviews(){
           ))}
         </div>
       </main>
+      <PatientFooter />
     </div>
   );
 }

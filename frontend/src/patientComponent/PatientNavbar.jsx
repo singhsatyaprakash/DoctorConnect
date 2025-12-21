@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { FaUser, FaCalendarAlt, FaComments, FaVideo, FaStar, FaBars, FaTimes, FaHome, FaCog, FaSignOutAlt, FaChevronDown, FaCheckCircle } from "react-icons/fa";
+import { FaUser, FaCalendarAlt, FaComments, FaVideo, FaStar, FaBars, FaTimes, FaHome, FaCog, FaSignOutAlt, FaChevronDown, FaCheckCircle, FaClipboardList, FaUserMd } from "react-icons/fa";
 import { NavLink, Link } from "react-router-dom";
 import { usePatientAuth } from "../contexts/PatientContext";
 import noProfileImage from "../assets/noProfile.webp";
@@ -9,6 +9,7 @@ const PatientNavbar = () => {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [role, setRole] = useState(() => localStorage.getItem('role') || 'patient');
 
+  
   useEffect(() => {
     const onStorage = (e) => { if (e.key === 'role') setRole(e.newValue || 'patient'); };
     window.addEventListener('storage', onStorage);
@@ -31,10 +32,12 @@ const PatientNavbar = () => {
 
   const navLinks = [
     { path: "/patient/dashboard", label: "Dashboard", icon: FaHome },
+    { path: "/patient/my-doctor", label: "My Doctor", icon: FaUserMd },
     { path: "/patient/appointments", label: "Appointments", icon: FaCalendarAlt },
     { path: "/patient/chats", label: "Chats", icon: FaComments, badge: unread },
     { path: "/patient/video", label: "Video Calls", icon: FaVideo },
     { path: "/patient/reviews", label: "Reviews", icon: FaStar },
+    { path: "/patient/daily-routine", label: "Daily Routine", icon: FaClipboardList },
   ];
 
   return (

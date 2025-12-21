@@ -20,6 +20,9 @@ import DoctorProtectedWrapper from "./ProtectWrapper/DoctorProtectedWrapper";
 import { PatientProvider } from "./contexts/PatientContext";
 import PatientProtectedWrapper from "./ProtectWrapper/PatientProtectedWrapper";
 import Settings from "./pages/Doctor/Settings";
+import AppointmentBooking from "./pages/Patient/AppointmentBooking";
+import DoctorBookingProcess from "./pages/Patient/DoctorBookingProcess"; // added
+import VerifyEmailPage from "./component/VerifyEmailPage";
 
 const App = () => {
   return (
@@ -30,12 +33,21 @@ const App = () => {
           <Routes>
             {/* Home */}
             <Route path="/" element={<Home />} />
+            <Route path='/verfiy-email' element={<VerifyEmailPage/>} />
 
             {/* Patient Routes */}
             <Route path='/register/patient' element={<PatientRegister/>} />
             {/* protect dashboard */}
             <Route path='/patient/dashboard' element={
               <PatientProtectedWrapper><PatientDashboard/></PatientProtectedWrapper>
+            } />
+            <Route path='/patient/appointments' element={
+              <PatientProtectedWrapper><AppointmentBooking/></PatientProtectedWrapper>
+            } />
+
+            {/* Doctor booking flow for patient */}
+            <Route path='/patient/doctor/:doctorId/book' element={
+              <PatientProtectedWrapper><DoctorBookingProcess/></PatientProtectedWrapper>
             } />
 
             {/* Doctor Routes */}

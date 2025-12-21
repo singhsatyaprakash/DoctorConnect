@@ -1,75 +1,174 @@
-import React, { useState, useMemo } from "react";
-import PatientNavbar from '../../patientComponent/PatientNavbar';
-import { useNavigate, useLocation } from "react-router-dom";
+import React, { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import PatientNavbar from '../../patientComponent/PatientNavbar'
+import { usePatientAuth } from '../../contexts/PatientContext'
+import { MdChat, MdCall, MdVideocam, MdStar, MdAccessTime, MdLanguage, MdVerified, MdSearch, MdRefresh } from 'react-icons/md'
+import axios from 'axios'
 
-const sampleDoctors = [
-  { id: 1, name: "Dr. Asha Rao", specialty: "Cardiologist", types: ["in-person","video"], rating: 4.7 },
-  { id: 2, name: "Dr. Vikram Singh", specialty: "General Physician", types: ["in-person","video"], rating: 4.5 },
-  { id: 3, name: "Dr. Priya Mehta", specialty: "Dermatologist", types: ["video"], rating: 4.2 },
+const SPECIALIZATIONS = [
+  'General Physician','Cardiologist','Dermatologist','Psychiatrist','Pediatrician',
+  'Neurologist','Orthopedic','Gynecologist','Endocrinologist','ENT'
 ];
 
-const categories = ["General Physician", "Cardiologist", "Dermatologist", "Psychiatrist", "Pediatrician"];
+const AppointmentBooking = () => {
+  const [specialization, setSpecialization] = useState('');
+  const [minFee, setMinFee] = useState('');
+  const [maxFee, setMaxFee] = useState('');
+  const [doctors, setDoctors] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [searchName, setSearchName] = useState('');
 
-export default function AppointmentBooking() {
   const navigate = useNavigate();
-  const { search } = useLocation();
-  const params = new URLSearchParams(search);
-  const preType = params.get('type') || '';
+  const { patient } = usePatientAuth()
 
-  const [query, setQuery] = useState("");
-  const [category, setCategory] = useState("");
-  const [apptType, setApptType] = useState(preType || "in-person");
+  useEffect(() => {
+    // fetch whenever any filter changes
+    fetchDoctors();
+    // eslint-disable-next-line
+  }, [specialization, minFee, maxFee, searchName]);
 
-  const results = useMemo(() => {
-    return sampleDoctors.filter(d => {
-      if (category && d.specialty !== category) return false;
-      if (apptType && !d.types.includes(apptType)) return false;
-      if (query && !(`${d.name} ${d.specialty}`).toLowerCase().includes(query.toLowerCase())) return false;
-      return true;
-    });
-  }, [query, category, apptType]);
+  const fetchDoctors = async () => {
+    setLoading(true);
+    const params = new URLSearchParams();
+    if (searchName) params.append('name', searchName);
+    if (specialization) params.append('specialization', specialization);
+    if (minFee) params.append('minFee', minFee);
+    if (maxFee) params.append('maxFee', maxFee);
+    try {
+      const res = await axios.get(`${import.meta.env.VITE_API_URL}/appointments/search`, { params: Object.fromEntries(params) });
+      console.log(res);
+      if (res.data?.success) setDoctors(res.data.data || []);
+      else setDoctors([]);
+    } catch (e) {
+      console.error(e);
+      setDoctors([]);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  const book = (doc) => {
-    // simple mock: navigate to confirmation or back to dashboard
-    alert(`Booked ${apptType} appointment with ${doc.name}`);
-    navigate("/patient/dashboard");
+  const openBooking = (doc) => {
+    // navigate to booking process page with doctor id (and pass doctor in state optional)
+    navigate(`/patient/doctor/${doc._id}/book`, { state: { doctor: doc } });
   };
 
   return (
     <div className="min-h-screen bg-gray-50">
       <PatientNavbar />
-      <main className="lg:pl-64 p-6">
-        <h1 className="text-xl font-semibold mb-4">Book Appointment</h1>
-
-        <div className="bg-white p-4 rounded shadow mb-4">
-          <div className="flex gap-3 flex-col md:flex-row">
-            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search doctor or problem" className="flex-1 px-3 py-2 border rounded" />
-            <select value={category} onChange={(e) => setCategory(e.target.value)} className="px-3 py-2 border rounded">
-              <option value="">All Categories</option>
-              {categories.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-            <select value={apptType} onChange={(e) => setApptType(e.target.value)} className="px-3 py-2 border rounded">
-              <option value="in-person">In-Person</option>
-              <option value="video">Video Call</option>
-            </select>
+      <main className="lg:pl-64">
+        <div className="max-w-7xl mx-auto px-6 py-8">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h2 className="text-2xl font-semibold">Book Appointment</h2>
+              <p className="text-sm text-gray-500">Find and book appointments with verified doctors</p>
+            </div>
           </div>
-        </div>
 
-        <div className="grid gap-4">
-          {results.length === 0 && <div className="bg-white p-4 rounded shadow text-gray-500">No doctors match your filters.</div>}
-          {results.map(doc => (
-            <div key={doc.id} className="bg-white p-4 rounded shadow flex items-center justify-between">
+          {/* Filter Card */}
+          <div className="bg-white border rounded-xl p-5 mb-6 shadow-sm">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
               <div>
-                <div className="font-medium">{doc.name} <span className="text-sm text-gray-500">({doc.specialty})</span></div>
-                <div className="text-sm text-gray-500">Rating: {doc.rating}</div>
+                <label className="text-xs text-gray-500">Search Doctor</label>
+                <div className="mt-1 relative">
+                  <input placeholder="Search by name..." value={searchName} onChange={e=>setSearchName(e.target.value)} className="w-full px-3 py-2 border rounded-md pr-10" />
+                  <button type="button" onClick={fetchDoctors} className="absolute right-2 top-1/2 -translate-y-1/2 text-green-600"><MdSearch /></button>
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-gray-500">Specialization</label>
+                <select value={specialization} onChange={e => setSpecialization(e.target.value)} className="mt-1 w-full px-3 py-2 border rounded-md">
+                  <option value=''>All Specializations</option>
+                  {SPECIALIZATIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
               </div>
               <div className="flex gap-2">
-                <button onClick={() => book(doc)} className="px-3 py-2 bg-blue-600 text-white rounded">Book {apptType === 'video' ? 'Video' : 'In-Person'}</button>
+                <div className="flex-1">
+                  <label className="text-xs text-gray-500">Min Fee (₹)</label>
+                  <input placeholder="0" value={minFee} onChange={e=>setMinFee(e.target.value)} className="mt-1 w-full px-3 py-2 border rounded-md" />
+                </div>
+                <div className="flex-1">
+                  <label className="text-xs text-gray-500">Max Fee (₹)</label>
+                  <input placeholder="Any" value={maxFee} onChange={e=>setMaxFee(e.target.value)} className="mt-1 w-full px-3 py-2 border rounded-md" />
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="flex-1">
+                  <button onClick={fetchDoctors} className="w-full px-4 py-2 bg-green-600 text-white rounded-md flex items-center justify-center gap-2"><MdSearch /> Search</button>
+                </div>
+                <button onClick={() => { setSpecialization(''); setMinFee(''); setMaxFee(''); setSearchName(''); fetchDoctors(); }} className="px-4 py-2 text-gray-600 flex items-center gap-1"><MdRefresh /> Reset</button>
               </div>
             </div>
-          ))}
+            <div className="mt-4 flex items-center gap-4">
+              <label className="inline-flex items-center gap-2 text-sm text-gray-600">
+                <input type="checkbox" className="form-checkbox" /> Online Only
+              </label>
+              <div className="text-sm text-gray-500">Showing {doctors.length} doctors</div>
+            </div>
+          </div>
+
+          {/* logged-in patient info */}
+          <div className="mb-6 flex items-center gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-green-50 flex items-center justify-center text-green-600 font-semibold">{patient?.name?.split(' ').map(n=>n[0]).slice(0,2).join('').toUpperCase()}</div>
+              <div>
+                <div className="font-medium">{patient?.name ?? 'Guest'}</div>
+                <div className="text-xs text-gray-500">{patient?.email ?? ''}</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Doctors Grid */}
+          <div>
+            {loading ? <div className="text-gray-600">Loading...</div> : (
+              doctors.length === 0 ? <div className="text-gray-500">No doctors found</div> : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  {doctors.map(doc => (
+                    <div key={doc._id} className="bg-white rounded-xl p-4 shadow-sm border flex flex-col">
+                      <div className="flex items-start gap-4">
+                        <div className="w-16 h-16 rounded-full bg-green-50 flex items-center justify-center text-green-600 text-lg font-semibold">
+                          {doc.name?.split(' ').map(n=>n[0]).slice(0,2).join('').toUpperCase()}
+                        </div>
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <div className="font-semibold text-lg">{doc.name}</div>
+                            {doc.isVerified && <MdVerified className="text-green-600" />}
+                            <span className="ml-auto inline-block bg-green-100 text-green-700 text-xs px-2 py-1 rounded-full">Online</span>
+                          </div>
+                          <div className="text-sm text-gray-500">{doc.specialization}</div>
+                          <div className="flex items-center gap-3 text-sm text-gray-600 mt-2">
+                            <div className="flex items-center gap-1"><MdStar className="text-yellow-500" /> {doc.rating ?? 'N/A'}</div>
+                            <div className="flex items-center gap-1"><MdAccessTime /> {doc.experience ?? `${doc.yearsExp ?? 0} yrs`}</div>
+                            <div className="flex items-center gap-1"><MdLanguage /> {doc.languages?.join(', ') ?? 'English'}</div>
+                          </div>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {(doc.qualifications||[]).slice(0,3).map(q=>(
+                              <span key={q} className="text-xs bg-gray-100 px-2 py-1 rounded">{q}</span>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 border-t pt-3 flex items-center justify-between">
+                        <div className="flex items-center gap-6 text-sm text-gray-700">
+                          <div className="flex items-center gap-1"><MdChat /> ₹{doc.consultationFee?.chat ?? 0}</div>
+                          <div className="flex items-center gap-1"><MdCall /> ₹{doc.consultationFee?.voice ?? 0}</div>
+                          <div className="flex items-center gap-1"><MdVideocam /> ₹{doc.consultationFee?.video ?? 0}</div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <div className="text-sm text-gray-500">From <span className="font-semibold text-gray-800">₹{Math.min(doc.consultationFee?.chat||9999, doc.consultationFee?.voice||9999, doc.consultationFee?.video||9999)}</span></div>
+                          <button onClick={()=>openBooking(doc)} className="px-4 py-2 bg-green-600 text-white rounded-md">Book Now</button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )
+            )}
+          </div>
         </div>
       </main>
     </div>
-  );
+  )
 }
+
+export default AppointmentBooking

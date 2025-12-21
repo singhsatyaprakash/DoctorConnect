@@ -1,5 +1,6 @@
 import React from "react";
 import PatientNavbar from '../../patientComponent/PatientNavbar';
+import PatientFooter from '../../patientComponent/PatientFooter';
 
 const sampleSessions = [
   { id:1, doctor: "Dr. Priya Mehta", time: "Today 4:00 PM" },
@@ -28,6 +29,7 @@ export default function PatientVideoCall(){
           ))}
         </div>
       </main>
+      <PatientFooter />
     </div>
   );
 }

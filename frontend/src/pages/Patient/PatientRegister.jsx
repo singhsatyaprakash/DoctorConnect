@@ -3,13 +3,11 @@ import { Link, useNavigate } from "react-router-dom";
 import PatientRegisterNavbar from "./PatientRegisterNavbar";
 import PatientFooter from "../../patientComponent/PatientFooter";
 import { FaUser, FaEnvelope, FaPhone, FaBirthdayCake, FaLock, FaCheckCircle } from "react-icons/fa";
-import { usePatientAuth } from "../../contexts/PatientContext";
 
 const PatientRegister = () => {
   const [form, setForm] = useState({ name: '', email: '', phone: '', age: '', password: '', confirmPassword: '' });
   const [showPasswordRules, setShowPasswordRules] = useState(false);
   const navigate = useNavigate();
-  const { login } = usePatientAuth();
   const API_URL = import.meta?.env?.VITE_API_URL || 'http://localhost:3000';
 
   const handleChange = (e) => setForm(prev => ({ ...prev, [e.target.name]: e.target.value }));
@@ -37,9 +35,9 @@ const PatientRegister = () => {
         alert(data.message || 'Registration failed');
         return;
       }
-      // use context login to store token/profile
-      login(data.data.token, data.data.patient);
-      navigate(data.data.redirectTo || '/patient/dashboard');
+
+      // After registration, go to verify email (no dashboard redirect / no auto-login)
+      navigate("/verify-email", { state: { email: form.email } });
     } catch (err) {
       console.error('Register error', err);
       alert('Registration error');

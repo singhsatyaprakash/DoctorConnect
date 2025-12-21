@@ -2,12 +2,13 @@ import { useState } from "react";
 import DoctorRegisterNavbar from "../../doctorComponent/DoctorRegisterNavbar";
 import DoctorPreviewModal from "../../doctorComponent/DoctorPreviewModal";
 import axios from "axios";
+import { useNavigate } from "react-router-dom";
 
 const DoctorRegister = () => {
   const [step, setStep] = useState(1);
   const [showPreview, setShowPreview] = useState(false);
   const [loading, setLoading] = useState(false);
-
+  const navigate=useNavigate();
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -49,6 +50,8 @@ const DoctorRegister = () => {
 
       console.log("Success:", res.data);
       alert("Registration successful!");
+      navigate("/verify-email", { state: { email: formData.email } }); 
+      
 
     } catch (err) {
       console.error(err);
