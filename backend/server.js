@@ -32,11 +32,13 @@ app.use(express.urlencoded({ extended: true }));
 const doctorRoutes = require('./Routes/doctorRoutes');
 const patientRoutes = require('./Routes/patientRoutes');
 // const adminRoutes = require('./Routes/adminRoutes');
+const appointmentRoutes = require('./Routes/appointmentRoutes');
 
 // API routes
 app.use('/doctors', doctorRoutes);
 app.use('/patients', patientRoutes);
 // app.use('/admin', adminRoutes);
+app.use('/appointments',appointmentRoutes);
 
 // Socket.IO setup
 const io = new Server(server, {

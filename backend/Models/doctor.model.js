@@ -11,7 +11,8 @@ const doctorSchema = new mongoose.Schema(
       type: String,
       required: true,
       unique: true,
-      lowercase: true
+      lowercase: true,
+      trim: true
     },
     phone: {
       type: String,
@@ -29,8 +30,8 @@ const doctorSchema = new mongoose.Schema(
       type: Number, 
       required: true
     },
-    qualifications: [String],
-    languages: [String],
+    qualifications: { type: [String], default: [] },
+    languages: { type: [String], default: [] },
 
     consultationFee: {
       chat: { type: Number, default: 0 },
@@ -38,14 +39,37 @@ const doctorSchema = new mongoose.Schema(
       video: { type: Number, default: 0 }
     },
 
+    contactRevealFee: { // new - fee to reveal contact details
+      type: Number,
+      default: 50
+    },
+
     isOnline: {
       type: Boolean,
       default: false
     },
     availability: {
-      from: String,
-      to: String    
+      from: { type: String, default: "" },
+      to: { type: String, default: "" }
     },
+
+    // NEW: used when generating booking-history slots on-demand
+    slotDurationMinutes: {
+      type: Number,
+      default: 15,
+      min: 5,
+      max: 180
+    },
+
+    // slots for appointment booking
+    slots: [
+      {
+        date: { type: Date, required: true },
+        time: { type: String, required: true },
+        type: { type: String, enum: ['chat', 'video', 'voice', 'in-person'], required: true },
+        isBooked: { type: Boolean, default: false }
+      }
+    ],
 
     // Verification
     isVerified: {
@@ -69,10 +93,13 @@ const doctorSchema = new mongoose.Schema(
     // Profile
     profileImage: {
       type: String,
-      default: ""
+      default: "",
+      trim: true
     },
     bio: {
-      type: String
+      type: String,
+      default: "",
+      trim: true
     },
 
     // Security & Role

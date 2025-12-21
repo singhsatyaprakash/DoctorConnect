@@ -12,8 +12,17 @@ router.get('/available', doctorController.getAvailableDoctors);
 router.get('/profile', doctorMiddleware.authenticateDoctor, doctorController.getDoctorProfile);
 router.put('/profile', doctorMiddleware.authenticateDoctor, doctorController.updateDoctorProfile);
 
+// Slot management (doctor-auth)
+router.post('/slots', doctorMiddleware.authenticateDoctor, doctorController.createDoctorSlots);
+
+// Public slot calendar
+router.get('/:doctorId/slots', doctorController.getDoctorSlots);
+
 // Admin routes (optional - for admin panel)
 router.get('/all', doctorMiddleware.authenticateDoctor, doctorController.getAllDoctors);
+
+// Public doctor details (safe)
+router.get('/:doctorId', doctorController.getDoctorByIdPublic);
 
 // Test route
 router.get('/test', (req, res) => {
