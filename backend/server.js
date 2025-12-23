@@ -28,17 +28,30 @@ app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// + Health check
+app.get('/api/health', (req, res) => {
+  res.json({ ok: true, ts: new Date().toISOString() });
+});
+
 // Import routes
 const doctorRoutes = require('./Routes/doctorRoutes');
 const patientRoutes = require('./Routes/patientRoutes');
 // const adminRoutes = require('./Routes/adminRoutes');
 const appointmentRoutes = require('./Routes/appointmentRoutes');
 
+// + Prototype chat/call scheduling routes
+const chatRoutes = require('./Routes/chatRoutes');
+const callRoutes = require('./Routes/callRoutes');
+
 // API routes
 app.use('/doctors', doctorRoutes);
 app.use('/patients', patientRoutes);
 // app.use('/admin', adminRoutes);
 app.use('/appointments',appointmentRoutes);
+
+// + REST APIs for prototype chat/calls
+app.use('/api/chat', chatRoutes);
+app.use('/api/calls', callRoutes);
 
 // Socket.IO setup
 const io = new Server(server, {

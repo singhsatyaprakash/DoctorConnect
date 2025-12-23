@@ -5,32 +5,53 @@ const onlineUsers = new Set(); // Set<userId>
 const typingUsers = new Map(); // Map<roomId, Set<userId>>
 const pendingDisconnects = new Map(); // Map<userId, TimeoutId>
 
+// Mongo models (prototype persistence)
+const ChatRoom = require('../Models/ChatRoom');
+const ChatMessage = require('../Models/ChatMessage');
+const CallSchedule = require('../Models/CallSchedule');
+
+// ✅ Prototype allowlist (ONLY these two users can use realtime chat/calls)
+const PROTO_DOCTOR_ID = 'doctor@gmail.com';
+const PROTO_PATIENT_ID = 'patient@gmail.com';
+
 module.exports = (io) => {
   console.log('Socket.IO service initialized');
 
   // Authentication middleware
   io.use((socket, next) => {
-    // In production, you would validate JWT token here
-    const token = socket.handshake.auth.token;
     const userId = socket.handshake.query.userId;
     const userType = socket.handshake.query.userType;
-    
+
     if (!userId || !userType) {
       return next(new Error('Authentication error: Missing userId or userType'));
     }
-    
+
+    // ✅ hard restrict to prototype users only
+    const allowed =
+      (userId === PROTO_DOCTOR_ID && userType === 'doctor') ||
+      (userId === PROTO_PATIENT_ID && userType === 'patient');
+
+    if (!allowed) {
+      return next(new Error('Prototype mode: only doctor@gmail.com and patient@gmail.com are allowed'));
+    }
+
     // Store user info in socket
     socket.userId = userId;
     socket.userType = userType;
-    socket.userData = socket.handshake.query.userData ? 
-      JSON.parse(socket.handshake.query.userData) : {};
-    
+    try {
+      socket.userData = socket.handshake.query.userData
+        ? JSON.parse(socket.handshake.query.userData)
+        : {};
+    } catch {
+      socket.userData = {};
+    }
+
     next();
   });
 
   io.on('connection', (socket) => {
     const { userId, userType, userData } = socket;
-    
+
     // If there was a pending disconnect for this user, cancel it (user reconnected)
     if (pendingDisconnects.has(userId)) {
       clearTimeout(pendingDisconnects.get(userId));
@@ -71,19 +92,18 @@ module.exports = (io) => {
     // =================== CHAT FUNCTIONALITY ===================
     
     // Join chat room
-    socket.on('join-chat-room', ({ roomId, userId, userType, timestamp }) => {
+    socket.on('join-chat-room', async ({ roomId, timestamp } = {}) => {
       try {
+        if (!roomId) throw new Error('Missing roomId');
+
         socket.join(roomId);
-        
-        // Track user's rooms
-        if (!userRooms.has(userId)) {
-          userRooms.set(userId, new Set());
-        }
+
+        // Track user's rooms (use authenticated socket userId)
+        if (!userRooms.has(userId)) userRooms.set(userId, new Set());
         userRooms.get(userId).add(roomId);
-        
+
         console.log(`💬 ${userId} (${userType}) joined chat room: ${roomId}`);
-        
-        // Notify others in the room
+
         socket.to(roomId).emit('user-joined-chat', {
           roomId,
           userId,
@@ -98,6 +118,28 @@ module.exports = (io) => {
           participants: roomSize,
           timestamp: new Date().toISOString()
         });
+        
+        // + Upsert room record (best-effort)
+        //   Prototype convention supported: "chat_<doctorId>_<patientId>"
+        try {
+          const parts = String(roomId || '').split('_');
+          const isProto = parts[0] === 'chat' && parts.length >= 3;
+          const doctorId = isProto ? parts[1] : undefined;
+          const patientId = isProto ? parts[2] : undefined;
+
+          await ChatRoom.findOneAndUpdate(
+            { roomId },
+            {
+              roomId,
+              doctorId,
+              patientId,
+              lastActiveAt: new Date(),
+            },
+            { upsert: true, new: true }
+          );
+        } catch (e) {
+          console.warn('ChatRoom upsert failed (non-fatal):', e?.message || e);
+        }
       } catch (error) {
         console.error('Error joining chat room:', error);
         socket.emit('error', {
@@ -130,18 +172,40 @@ module.exports = (io) => {
     });
 
     // Send message
-    socket.on('send-message', ({ roomId, message }) => {
+    socket.on('send-message', async ({ roomId, message }) => {
       try {
-        if (!message || !roomId) {
-          throw new Error('Missing roomId or message');
-        }
-        
+        if (!message || !roomId) throw new Error('Missing roomId or message');
+
+        // ✅ prevent client spoofing sender
         const messageData = {
           ...message,
+          senderId: userId,
+          senderType: userType,
           timestamp: new Date().toISOString(),
           delivered: true
         };
         
+        // + Persist message (best-effort)
+        let persisted = null;
+        try {
+          persisted = await ChatMessage.create({
+            roomId,
+            senderId: messageData.senderId || userId,
+            senderType: messageData.senderType || userType,
+            text: messageData.text || '',
+            clientMessageId: messageData.id,
+            meta: {
+              fromSocketId: socket.id,
+            },
+            createdAt: new Date(),
+          });
+
+          // attach server id for clients that care
+          messageData.serverMessageId = String(persisted._id);
+        } catch (e) {
+          console.warn('ChatMessage persist failed (non-fatal):', e?.message || e);
+        }
+
         // Broadcast to room (including sender for consistency)
         io.to(roomId).emit('receive-message', {
           roomId,
@@ -166,26 +230,25 @@ module.exports = (io) => {
     });
 
     // Typing indicator
-    socket.on('typing', ({ roomId, userId, isTyping }) => {
+    socket.on('typing', ({ roomId, isTyping } = {}) => {
       try {
+        const typingUserId = userId;
+        if (!roomId) return;
+
         if (isTyping) {
-          if (!typingUsers.has(roomId)) {
-            typingUsers.set(roomId, new Set());
-          }
-          typingUsers.get(roomId).add(userId);
+          if (!typingUsers.has(roomId)) typingUsers.set(roomId, new Set());
+          typingUsers.get(roomId).add(typingUserId);
         } else {
           if (typingUsers.has(roomId)) {
-            typingUsers.get(roomId).delete(userId);
-            if (typingUsers.get(roomId).size === 0) {
-              typingUsers.delete(roomId);
-            }
+            typingUsers.get(roomId).delete(typingUserId);
+            if (typingUsers.get(roomId).size === 0) typingUsers.delete(roomId);
           }
         }
-        
+
         socket.to(roomId).emit('typing', {
           roomId,
-          userId,
-          isTyping,
+          userId: typingUserId,
+          isTyping: !!isTyping,
           timestamp: new Date().toISOString()
         });
       } catch (error) {
@@ -210,8 +273,13 @@ module.exports = (io) => {
     // =================== VIDEO CALL FUNCTIONALITY ===================
     
     // Join video room
-    socket.on('join-video-room', ({ roomId, userId, userType, userData, timestamp }) => {
+    socket.on('join-video-room', ({ roomId, timestamp } = {}) => {
       try {
+        if (!roomId) throw new Error('Missing roomId');
+
+        const joinUserId = userId;
+        const joinUserType = userType;
+
         socket.join(`video-${roomId}`);
         
         console.log(`🎥 ${userId} joined video room: ${roomId}`);
@@ -224,8 +292,8 @@ module.exports = (io) => {
         // Notify existing participants about new user
         socket.to(videoRoom).emit('user-joined-video', {
           roomId,
-          userId,
-          userType,
+          userId: joinUserId,
+          userType: joinUserType,
           userData,
           socketId: socket.id,
           timestamp: timestamp || new Date().toISOString()
@@ -312,20 +380,68 @@ module.exports = (io) => {
       }
     });
 
-    // Call control - Start call
-    socket.on('call-start', ({ roomId, callerId, patientId, timestamp }) => {
+    // + Schedule a call (prototype)
+    // payload: { roomId, doctorId, patientId, scheduledFor }
+    socket.on('schedule-call', async ({ roomId, doctorId, patientId, scheduledFor }) => {
       try {
-        // Find patient's socket
-        const patientSocket = Array.from(activeConnections.entries())
-          .find(([_, data]) => data.userId === patientId)?.[0];
-        
-        if (patientSocket) {
-          io.to(patientSocket).emit('incoming-call', {
+        // ✅ only allow doctor<->patient schedule
+        if (
+          doctorId !== PROTO_DOCTOR_ID ||
+          patientId !== PROTO_PATIENT_ID ||
+          roomId !== `call_${PROTO_DOCTOR_ID}_${PROTO_PATIENT_ID}`
+        ) {
+          throw new Error('Prototype mode: invalid doctor/patient/room');
+        }
+        if (!scheduledFor) throw new Error('Missing scheduledFor');
+
+        const schedule = await CallSchedule.create({
+          roomId,
+          doctorId,
+          patientId,
+          scheduledFor: new Date(scheduledFor),
+          status: 'scheduled',
+          createdByUserId: userId,
+          createdAt: new Date(),
+        });
+
+        // notify both users (socket + notifications room if used)
+        io.to(`notifications-${doctorId}`).emit('call-scheduled', schedule);
+        io.to(`notifications-${patientId}`).emit('call-scheduled', schedule);
+        socket.emit('call-scheduled', schedule);
+      } catch (error) {
+        console.error('Error scheduling call:', error);
+        socket.emit('error', { type: 'SCHEDULE_CALL_ERROR', message: error.message });
+      }
+    });
+
+    // Call control - Start call
+    socket.on('call-start', async ({ roomId, timestamp }) => {
+      try {
+        // ✅ ignore callerId/patientId from client; compute the other party
+        const callerId = userId;
+        const otherUserId = callerId === PROTO_DOCTOR_ID ? PROTO_PATIENT_ID : PROTO_DOCTOR_ID;
+
+        const targetSocket = Array.from(activeConnections.entries())
+          .find(([_, data]) => data.userId === otherUserId)?.[0];
+
+        if (targetSocket) {
+          io.to(targetSocket).emit('incoming-call', {
             roomId,
             callerId,
             callerData: userData,
             timestamp: timestamp || new Date().toISOString()
           });
+        }
+
+        // ✅ update schedule only for prototype room
+        try {
+          await CallSchedule.findOneAndUpdate(
+            { roomId, doctorId: PROTO_DOCTOR_ID, patientId: PROTO_PATIENT_ID, status: { $in: ['scheduled'] } },
+            { status: 'in_progress', startedAt: new Date(), lastUpdatedAt: new Date() },
+            { new: true }
+          );
+        } catch (e) {
+          console.warn('CallSchedule start update failed (non-fatal):', e?.message || e);
         }
       } catch (error) {
         console.error('Error starting call:', error);
@@ -333,30 +449,25 @@ module.exports = (io) => {
     });
 
     // Call control - End call
-    socket.on('call-end', ({ roomId, userId, timestamp }) => {
+    socket.on('call-end', async ({ roomId, userId, timestamp }) => {
       try {
         io.to(`video-${roomId}`).emit('call-ended', {
           roomId,
           endedBy: userId,
           timestamp: timestamp || new Date().toISOString()
         });
+
+        // + Best-effort: mark any in-progress schedule for this room as ended
+        try {
+          await CallSchedule.updateMany(
+            { roomId, status: 'in_progress' },
+            { status: 'ended', endedAt: new Date(), lastUpdatedAt: new Date() }
+          );
+        } catch (e) {
+          console.warn('CallSchedule end update failed (non-fatal):', e?.message || e);
+        }
       } catch (error) {
         console.error('Error ending call:', error);
-      }
-    });
-
-    // Call control - Toggle audio/video
-    socket.on('call-toggle', ({ roomId, userId, type, enabled, timestamp }) => {
-      try {
-        socket.to(`video-${roomId}`).emit('call-toggled', {
-          roomId,
-          userId,
-          type, // 'audio' or 'video'
-          enabled,
-          timestamp: timestamp || new Date().toISOString()
-        });
-      } catch (error) {
-        console.error('Error toggling call control:', error);
       }
     });
 

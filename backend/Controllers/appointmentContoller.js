@@ -46,13 +46,24 @@ exports.searchDoctors = async (req, res) => {
 // GET single doctor by id (safe)
 exports.getDoctor = async (req, res) => {
   try {
-    const id = req.params.id;
+    const id = String(req.params.id || '');
+
+    // Defensive: prevents CastError when routes are mis-hit (e.g., "me")
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid doctor id'
+      });
+    }
+
     const doctor = await Doctor.findById(id).lean();
     if (!doctor) return res.status(404).json({ success: false, message: "Doctor not found" });
+
     // remove sensitive fields
     delete doctor.password;
     delete doctor.token;
     delete doctor.__v;
+
     return res.json({ success: true, data: doctor });
   } catch (err) {
     console.error("getDoctor error:", err);
@@ -281,6 +292,9 @@ exports.confirmPayment = async (req, res) => {
 
     await ensureDaySchedule({ doctorId, date, doctorDoc: doctor });
 
+    // PRE-GENERATE appointment id so bookingHistory can store bookingRef atomically
+    const apptId = new mongoose.Types.ObjectId();
+
     // atomically reserve the slot (by time)
     const reserve = await DoctorDaySchedule.updateOne(
       {
@@ -288,7 +302,17 @@ exports.confirmPayment = async (req, res) => {
         date: String(date),
         bookedSlots: { $not: { $elemMatch: { time: String(time) } } },
       },
-      { $push: { bookedSlots: { time: String(time), type: String(type), patient: patientId } } }
+      {
+        $push: {
+          bookedSlots: {
+            time: String(time),
+            type: String(type),
+            fee,
+            patient: patientId,
+            bookingRef: apptId,
+          },
+        },
+      }
     );
 
     if (!reserve?.modifiedCount) {
@@ -297,12 +321,15 @@ exports.confirmPayment = async (req, res) => {
 
     const scheduledAt = toScheduledAtUTC(String(date), String(time));
     if (!scheduledAt) {
-      // rollback slot
-      await DoctorDaySchedule.updateOne({ doctor: doctorId, date: String(date) }, { $pull: { bookedSlots: { time: String(time) } } });
+      await DoctorDaySchedule.updateOne(
+        { doctor: doctorId, date: String(date) },
+        { $pull: { bookedSlots: { time: String(time) } } }
+      );
       return res.status(400).json({ success: false, message: "Invalid scheduled time" });
     }
 
     const appointment = await Appointment.create({
+      _id: apptId, // IMPORTANT
       patient: patientId,
       doctor: doctorId,
       type: String(type),
@@ -434,14 +461,24 @@ exports.rescheduleAppointment = async (req, res) => {
     // Ensure schedule exists for the target date
     await ensureDaySchedule({ doctorId, date: String(date), doctorDoc: doctor });
 
-    // Reserve NEW slot first (avoid losing old slot if new slot is taken)
+    // Reserve NEW slot first
     const reserve = await DoctorDaySchedule.updateOne(
       {
         doctor: doctorId,
         date: String(date),
         bookedSlots: { $not: { $elemMatch: { time: String(time) } } },
       },
-      { $push: { bookedSlots: { time: String(time), type: String(appt.type || "video"), patient: patientId } } }
+      {
+        $push: {
+          bookedSlots: {
+            time: String(time),
+            type: String(appt.type || "video"),
+            fee: Number(appt.fee || 0),
+            patient: patientId,
+            bookingRef: appt._id,
+          },
+        },
+      }
     );
 
     if (!reserve?.modifiedCount) {
@@ -450,7 +487,6 @@ exports.rescheduleAppointment = async (req, res) => {
 
     const scheduledAt = toScheduledAtUTC(String(date), String(time));
     if (!scheduledAt) {
-      // rollback reservation
       await DoctorDaySchedule.updateOne(
         { doctor: doctorId, date: String(date) },
         { $pull: { bookedSlots: { time: String(time) } } }
@@ -480,6 +516,189 @@ exports.rescheduleAppointment = async (req, res) => {
     return res.json({ success: true, data: appt.getPublicDetails() });
   } catch (err) {
     console.error("rescheduleAppointment error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+// ===============================
+// Doctor-side endpoints (NEW)
+// ===============================
+
+// GET /appointments/doctor/me?status=all|booked|cancelled|completed
+exports.getDoctorAppointments = async (req, res) => {
+  try {
+    const doctorId = String(req.user?.id || "");
+    console.log("Doctor ID:", doctorId);
+    if (!mongoose.Types.ObjectId.isValid(doctorId)) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
+
+    const status = String(req.query?.status || "all");
+    const filter = { doctor: doctorId };
+    if (status && status !== "all") filter.status = status;
+
+    const list = await Appointment.find(filter)
+      .sort({ scheduledAt: -1 })
+      .populate({ path: "patient", select: "name email phone profileImage" })
+      .lean();
+
+    const cleaned = list.map((a) => {
+      delete a.__v;
+      return a;
+    });
+
+    return res.json({ success: true, data: cleaned });
+  } catch (err) {
+    console.error("getDoctorAppointments error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+// GET /appointments/doctor/me/upcoming
+exports.getDoctorUpcomingAppointments = async (req, res) => {
+  try {
+    const doctorId = String(req.user?.id || "");
+    if (!mongoose.Types.ObjectId.isValid(doctorId)) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
+
+    const now = new Date();
+    const list = await Appointment.find({
+      doctor: doctorId,
+      status: "booked",
+      scheduledAt: { $gte: now },
+    })
+      .sort({ scheduledAt: 1 })
+      .limit(50)
+      .populate({ path: "patient", select: "name email phone profileImage" })
+      .lean();
+
+    return res.json({ success: true, data: list });
+  } catch (err) {
+    console.error("getDoctorUpcomingAppointments error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+// POST /appointments/:appointmentId/doctor-cancel
+exports.doctorCancelAppointment = async (req, res) => {
+  try {
+    const { appointmentId } = req.params;
+    const { reason } = req.body || {};
+    const doctorId = String(req.user?.id || "");
+
+    if (!mongoose.Types.ObjectId.isValid(String(appointmentId)) || !mongoose.Types.ObjectId.isValid(doctorId)) {
+      return res.status(400).json({ success: false, message: "Invalid ids" });
+    }
+
+    const appt = await Appointment.findById(appointmentId);
+    if (!appt) return res.status(404).json({ success: false, message: "Appointment not found" });
+    if (String(appt.doctor) !== doctorId) return res.status(403).json({ success: false, message: "Forbidden" });
+    if (String(appt.status) !== "booked") {
+      return res.status(400).json({ success: false, message: "Appointment is not cancellable" });
+    }
+
+    appt.status = "cancelled";
+    appt.cancelledAt = new Date();
+    appt.cancelReason = typeof reason === "string" ? reason : "";
+    await appt.save();
+
+    // release booked slot
+    if (appt.doctor && appt.date && appt.startTime) {
+      await DoctorDaySchedule.updateOne(
+        { doctor: appt.doctor, date: String(appt.date) },
+        { $pull: { bookedSlots: { time: String(appt.startTime) } } }
+      );
+    }
+
+    return res.json({ success: true, data: appt.getPublicDetails() });
+  } catch (err) {
+    console.error("doctorCancelAppointment error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+// POST /appointments/:appointmentId/doctor-reschedule
+exports.doctorRescheduleAppointment = async (req, res) => {
+  try {
+    const { appointmentId } = req.params;
+    const { date, time } = req.body || {};
+    const doctorId = String(req.user?.id || "");
+
+    if (!mongoose.Types.ObjectId.isValid(String(appointmentId)) || !mongoose.Types.ObjectId.isValid(doctorId)) {
+      return res.status(400).json({ success: false, message: "Invalid ids" });
+    }
+    if (!isYYYYMMDD(date) || !isHHMM(time)) {
+      return res.status(400).json({ success: false, message: "Invalid date/time" });
+    }
+
+    const appt = await Appointment.findById(appointmentId);
+    if (!appt) return res.status(404).json({ success: false, message: "Appointment not found" });
+    if (String(appt.doctor) !== doctorId) return res.status(403).json({ success: false, message: "Forbidden" });
+    if (String(appt.status) !== "booked") {
+      return res.status(400).json({ success: false, message: "Only booked appointments can be rescheduled" });
+    }
+
+    const doctor = await Doctor.findById(doctorId).lean();
+    if (!doctor) return res.status(404).json({ success: false, message: "Doctor not found" });
+    const duration = Number(doctor?.slotDurationMinutes) || 15;
+
+    await ensureDaySchedule({ doctorId, date: String(date), doctorDoc: doctor });
+
+    // reserve NEW slot first
+    const reserve = await DoctorDaySchedule.updateOne(
+      {
+        doctor: doctorId,
+        date: String(date),
+        bookedSlots: { $not: { $elemMatch: { time: String(time) } } },
+      },
+      {
+        $push: {
+          bookedSlots: {
+            time: String(time),
+            type: String(appt.type || "video"),
+            fee: Number(appt.fee || 0),
+            patient: appt.patient,
+            bookingRef: appt._id,
+          },
+        },
+      }
+    );
+
+    if (!reserve?.modifiedCount) {
+      return res.status(409).json({ success: false, message: "Selected slot is not available" });
+    }
+
+    const scheduledAt = toScheduledAtUTC(String(date), String(time));
+    if (!scheduledAt) {
+      await DoctorDaySchedule.updateOne(
+        { doctor: doctorId, date: String(date) },
+        { $pull: { bookedSlots: { time: String(time) } } }
+      );
+      return res.status(400).json({ success: false, message: "Invalid scheduled time" });
+    }
+
+    const oldDate = appt.date;
+    const oldStart = appt.startTime;
+
+    appt.date = String(date);
+    appt.startTime = String(time);
+    appt.endTime = addMinutesHHMM(String(time), duration);
+    appt.scheduledAt = scheduledAt;
+
+    await appt.save();
+
+    // release OLD slot
+    if (oldDate && oldStart) {
+      await DoctorDaySchedule.updateOne(
+        { doctor: doctorId, date: String(oldDate) },
+        { $pull: { bookedSlots: { time: String(oldStart) } } }
+      );
+    }
+
+    return res.json({ success: true, data: appt.getPublicDetails() });
+  } catch (err) {
+    console.error("doctorRescheduleAppointment error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
   }
 };
